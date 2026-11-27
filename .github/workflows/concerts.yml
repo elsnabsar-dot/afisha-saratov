@@ -1,0 +1,62 @@
+name: Big Concerts
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'preview = only files; publish = one real post in Telegram'
+        type: choice
+        options: [preview, publish]
+        default: preview
+  schedule:
+    - cron: '17 9 * * *'
+permissions:
+  contents: write
+concurrency:
+  group: afisha-publications
+  cancel-in-progress: false
+jobs:
+  concerts:
+    if: github.event_name == 'workflow_dispatch' || vars.CONCERTS_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: python -m pip install 'requests==2.32.5' 'beautifulsoup4==4.14.2' 'Pillow==12.0.0'
+      - name: Build concert preview or publish
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ACTION: ${{ inputs.action }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "schedule" || "$INPUT_ACTION" == "publish" ]]; then
+            python concerts.py --publish
+          else
+            python concerts.py
+          fi
+      - name: Preserve publication journal
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -f state/concerts.json ]]; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add state/concerts.json
+            if ! git diff --cached --quiet; then
+              git commit -m 'Save concert publication journal'
+              git pull --rebase origin main
+              git push origin HEAD:main
+            fi
+          fi
+      - name: Upload concert preview
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: concerts-preview
+          path: concert-preview/
+          retention-days: 3
